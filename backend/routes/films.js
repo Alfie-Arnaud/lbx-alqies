@@ -3,34 +3,90 @@ const router = express.Router();
 const Film = require('../models/film');
 const { authenticateToken } = require('../middleware/auth');
 
-// Get film details (with user-specific data if authenticated)
+// Ensure film exists in DB (called before any user interaction)
+router.post('/ensure', authenticateToken, async (req, res) => {
+    try {
+        const { tmdbId, title, posterPath, backdropPath, releaseDate, runtime, overview, voteAverage, voteCount } = req.body;
+        if (!tmdbId || !title) return res.status(400).json({ error: 'tmdbId and title are required' });
+
+        // If voteAverage not provided or 0, fetch from TMDB
+        let finalVoteAverage = voteAverage || 0;
+        let finalVoteCount = voteCount || 0;
+        if (!finalVoteAverage) {
+            try {
+                const https = require('https');
+                const tmdbKey = process.env.TMDB_API_KEY;
+                const tmdbData = await new Promise((resolve, reject) => {
+                    https.get(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${tmdbKey}`, r => {
+                        let d = '';
+                        r.on('data', c => d += c);
+                        r.on('end', () => resolve(JSON.parse(d)));
+                    }).on('error', reject);
+                });
+                finalVoteAverage = tmdbData.vote_average || 0;
+                finalVoteCount = tmdbData.vote_count || 0;
+            } catch (e) {
+                console.error('Failed to fetch TMDB rating:', e);
+            }
+        }
+
+        const film = Film.createOrUpdate({
+            tmdbId: parseInt(tmdbId),
+            title,
+            posterPath,
+            backdropPath,
+            releaseDate,
+            runtime,
+            overview,
+            voteAverage: finalVoteAverage,
+            voteCount: finalVoteCount,
+        });
+
+        res.json({ film: Film.toJSON(film) });
+    } catch (error) {
+        console.error('Ensure film error:', error);
+        res.status(500).json({ error: 'Failed to ensure film' });
+    }
+});
+
+// Get user's status for a film (watched, watchlist, rating)
+router.get('/:tmdbId/status', authenticateToken, async (req, res) => {
+    try {
+        const { tmdbId } = req.params;
+        const film = Film.findByTmdbId(parseInt(tmdbId));
+        if (!film) return res.json({ watched: false, inWatchlist: false, rating: 0 });
+
+        const userFilm = Film.getUserFilm(req.user.userId, film.id);
+        const inWatchlist = Film.isInWatchlist(req.user.userId, film.id);
+
+        res.json({
+            watched: userFilm?.is_watched === 1 || false,
+            inWatchlist,
+            rating: userFilm?.rating || 0,
+        });
+    } catch (error) {
+        console.error('Get film status error:', error);
+        res.status(500).json({ error: 'Failed to get film status' });
+    }
+});
+
+// Get film details
 router.get('/:tmdbId', async (req, res) => {
     try {
         const { tmdbId } = req.params;
         let film = Film.findByTmdbId(parseInt(tmdbId));
-        
-        // If film doesn't exist in DB, we'll return basic info
-        // The frontend will fetch from TMDB
-        if (!film) {
-            return res.json({ 
-                film: null,
-                message: 'Film not in database yet'
-            });
-        }
-        
+
+        if (!film) return res.json({ film: null, message: 'Film not in database yet' });
+
         const filmData = Film.toJSON(film);
-        
-        // Get average rating from our users
-        const rating = Film.getAverageRating(film.id);
-        filmData.localRating = rating;
-        
-        // If user is authenticated, get their interaction
+        filmData.localRating = Film.getAverageRating(film.id);
+
         if (req.user) {
             const userFilm = Film.getUserFilm(req.user.userId, film.id);
             filmData.userData = userFilm;
             filmData.isInWatchlist = Film.isInWatchlist(req.user.userId, film.id);
         }
-        
+
         res.json({ film: filmData });
     } catch (error) {
         console.error('Get film error:', error);
@@ -38,31 +94,22 @@ router.get('/:tmdbId', async (req, res) => {
     }
 });
 
-// Mark film as watched
+// Mark film as watched / unwatched
 router.post('/:tmdbId/watched', authenticateToken, async (req, res) => {
     try {
         const { tmdbId } = req.params;
-        const { rating, watchedDate } = req.body;
-        
-        // Find or create film
+        const { watched } = req.body;
+
         let film = Film.findByTmdbId(parseInt(tmdbId));
-        if (!film) {
-            // Film needs to be created first (frontend should provide film data)
-            return res.status(404).json({ error: 'Film not found. Please provide film data first.' });
+        if (!film) return res.status(404).json({ error: 'Film not found. Call /ensure first.' });
+
+        if (watched === false) {
+            Film.unmarkAsWatched(req.user.userId, film.id);
+            return res.json({ message: 'Film unmarked as watched' });
         }
-        
-        const userFilm = Film.markAsWatched(
-            req.user.userId,
-            film.id,
-            parseInt(tmdbId),
-            rating,
-            watchedDate
-        );
-        
-        res.json({
-            message: 'Film marked as watched',
-            userFilm
-        });
+
+        const userFilm = await Film.markAsWatched(req.user.userId, film.id, parseInt(tmdbId));
+        res.json({ message: 'Film marked as watched', userFilm });
     } catch (error) {
         console.error('Mark watched error:', error);
         res.status(500).json({ error: 'Failed to mark film as watched' });
@@ -74,76 +121,42 @@ router.post('/:tmdbId/rate', authenticateToken, async (req, res) => {
     try {
         const { tmdbId } = req.params;
         const { rating } = req.body;
-        
-        if (rating === undefined || rating < 0 || rating > 5) {
+
+        if (rating === undefined || rating < 0 || rating > 5)
             return res.status(400).json({ error: 'Rating must be between 0 and 5' });
-        }
-        
+
         let film = Film.findByTmdbId(parseInt(tmdbId));
-        if (!film) {
-            return res.status(404).json({ error: 'Film not found' });
-        }
-        
-        const userFilm = Film.rateFilm(
-            req.user.userId,
-            film.id,
-            parseInt(tmdbId),
-            rating
-        );
-        
-        res.json({
-            message: 'Film rated successfully',
-            userFilm
-        });
+        if (!film) return res.status(404).json({ error: 'Film not found. Call /ensure first.' });
+
+        const userFilm = Film.rateFilm(req.user.userId, film.id, parseInt(tmdbId), rating);
+        res.json({ message: 'Film rated successfully', userFilm });
     } catch (error) {
         console.error('Rate film error:', error);
         res.status(500).json({ error: 'Failed to rate film' });
     }
 });
 
-// Add to watchlist
+// Add/remove watchlist (toggle)
 router.post('/:tmdbId/watchlist', authenticateToken, async (req, res) => {
     try {
         const { tmdbId } = req.params;
-        
-        let film = Film.findByTmdbId(parseInt(tmdbId));
-        if (!film) {
-            return res.status(404).json({ error: 'Film not found' });
-        }
-        
-        const success = Film.addToWatchlist(req.user.userId, film.id, parseInt(tmdbId));
-        
-        if (success) {
-            res.json({ message: 'Added to watchlist' });
-        } else {
-            res.status(409).json({ error: 'Already in watchlist' });
-        }
-    } catch (error) {
-        console.error('Add to watchlist error:', error);
-        res.status(500).json({ error: 'Failed to add to watchlist' });
-    }
-});
+        const { inWatchlist } = req.body;
 
-// Remove from watchlist
-router.delete('/:tmdbId/watchlist', authenticateToken, async (req, res) => {
-    try {
-        const { tmdbId } = req.params;
-        
         let film = Film.findByTmdbId(parseInt(tmdbId));
-        if (!film) {
-            return res.status(404).json({ error: 'Film not found' });
+        if (!film) return res.status(404).json({ error: 'Film not found. Call /ensure first.' });
+
+        if (inWatchlist === false) {
+            Film.removeFromWatchlist(req.user.userId, film.id);
+            return res.json({ message: 'Removed from watchlist' });
         }
-        
-        const success = Film.removeFromWatchlist(req.user.userId, film.id);
-        
-        if (success) {
-            res.json({ message: 'Removed from watchlist' });
-        } else {
-            res.status(404).json({ error: 'Not in watchlist' });
-        }
+
+        const success = Film.addToWatchlist(req.user.userId, film.id, parseInt(tmdbId));
+        success
+            ? res.json({ message: 'Added to watchlist' })
+            : res.status(409).json({ error: 'Already in watchlist' });
     } catch (error) {
-        console.error('Remove from watchlist error:', error);
-        res.status(500).json({ error: 'Failed to remove from watchlist' });
+        console.error('Watchlist error:', error);
+        res.status(500).json({ error: 'Failed to update watchlist' });
     }
 });
 
@@ -151,14 +164,9 @@ router.delete('/:tmdbId/watchlist', authenticateToken, async (req, res) => {
 router.get('/user/watched', authenticateToken, async (req, res) => {
     try {
         const { limit = 50, offset = 0 } = req.query;
-        const films = Film.getUserWatchedFilms(
-            req.user.userId,
-            parseInt(limit),
-            parseInt(offset)
-        );
+        const films = Film.getUserWatchedFilms(req.user.userId, parseInt(limit), parseInt(offset));
         res.json({ films });
     } catch (error) {
-        console.error('Get watched films error:', error);
         res.status(500).json({ error: 'Failed to get watched films' });
     }
 });
@@ -167,14 +175,9 @@ router.get('/user/watched', authenticateToken, async (req, res) => {
 router.get('/user/watchlist', authenticateToken, async (req, res) => {
     try {
         const { limit = 50, offset = 0 } = req.query;
-        const films = Film.getUserWatchlist(
-            req.user.userId,
-            parseInt(limit),
-            parseInt(offset)
-        );
+        const films = Film.getUserWatchlist(req.user.userId, parseInt(limit), parseInt(offset));
         res.json({ films });
     } catch (error) {
-        console.error('Get watchlist error:', error);
         res.status(500).json({ error: 'Failed to get watchlist' });
     }
 });
@@ -183,28 +186,20 @@ router.get('/user/watchlist', authenticateToken, async (req, res) => {
 router.get('/user/ratings', authenticateToken, async (req, res) => {
     try {
         const { limit = 50, offset = 0 } = req.query;
-        const films = Film.getUserRatings(
-            req.user.userId,
-            parseInt(limit),
-            parseInt(offset)
-        );
+        const films = Film.getUserRatings(req.user.userId, parseInt(limit), parseInt(offset));
         res.json({ films });
     } catch (error) {
-        console.error('Get ratings error:', error);
         res.status(500).json({ error: 'Failed to get ratings' });
     }
 });
 
-// Create or update film (when fetched from TMDB)
+// Create or update film
 router.post('/', authenticateToken, async (req, res) => {
     try {
         const filmData = req.body;
-        
-        // Validate required fields
-        if (!filmData.tmdbId || !filmData.title) {
+        if (!filmData.tmdbId || !filmData.title)
             return res.status(400).json({ error: 'tmdbId and title are required' });
-        }
-        
+
         const film = Film.createOrUpdate(filmData);
         res.json({ film: Film.toJSON(film) });
     } catch (error) {
@@ -218,20 +213,11 @@ router.get('/feed/activity', authenticateToken, async (req, res) => {
     try {
         const User = require('../models/user');
         const { limit = 50, offset = 0 } = req.query;
-        
-        // Get users the current user follows
         const following = User.getFollowing(req.user.userId);
         const userIds = [req.user.userId, ...following.map(u => u.id)];
-        
-        const activities = Film.getActivityFeed(
-            userIds,
-            parseInt(limit),
-            parseInt(offset)
-        );
-        
+        const activities = Film.getActivityFeed(userIds, parseInt(limit), parseInt(offset));
         res.json({ activities });
     } catch (error) {
-        console.error('Get activity feed error:', error);
         res.status(500).json({ error: 'Failed to get activity feed' });
     }
 });

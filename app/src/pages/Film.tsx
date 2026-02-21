@@ -1,36 +1,42 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { 
-  Star, Clock, Calendar, Eye, Plus, Check, Play, 
-  User, Heart, MessageCircle, Share2, Flag 
+import {
+  Star, Clock, Calendar, Eye, Plus, Check, Play,
+  User, Heart, MessageCircle, Share2, Flag
 } from 'lucide-react';
 import { useMovieDetails } from '@/hooks/useTMDB';
 import { useAuth } from '@/hooks/useAuth';
-import { 
-  getPosterUrl, 
-  getBackdropUrl, 
+import {
+  getPosterUrl,
+  getBackdropUrl,
   getProfileUrl,
-  formatRuntime, 
+  formatRuntime,
   formatYear,
   getTrailerKey,
   getDirector,
-  getTopCast 
+  getTopCast
 } from '@/utils/tmdb';
 import { StarRating } from '@/components/StarRating';
 import { FilmGrid } from '@/components/FilmGrid';
 import { ReviewCard } from '@/components/ReviewCard';
 
+const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+
 export function Film() {
   const { id } = useParams<{ id: string }>();
   const { user, isAuthenticated } = useAuth();
   const { data: movie, loading, error } = useMovieDetails(id ? parseInt(id) : null);
-  
+
   const [userRating, setUserRating] = useState(0);
   const [isWatched, setIsWatched] = useState(false);
   const [isInWatchlist, setIsInWatchlist] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [reviewContent, setReviewContent] = useState('');
   const [hasSpoiler, setHasSpoiler] = useState(false);
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [reviewError, setReviewError] = useState('');
 
   const movieData = movie as {
     id: number;
@@ -55,33 +61,154 @@ export function Film() {
   const cast = movieData?.credits ? getTopCast(movieData.credits as { cast: { name: string; profile_path: string; character: string }[] }, 6) : [];
   const similarMovies = (movieData?.similar?.results || []).slice(0, 6);
 
-  const handleRate = (rating: number) => {
-    if (!isAuthenticated) {
-      // Show login prompt
-      return;
+  // Fetch reviews for this film
+  useEffect(() => {
+    if (!movieData?.id) return;
+    const fetchReviews = async () => {
+      setReviewsLoading(true);
+      try {
+        const res = await fetch(`${API}/reviews/film/${movieData.id}`);
+        const data = await res.json();
+        setReviews(data.reviews || []);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setReviewsLoading(false);
+      }
+    };
+    fetchReviews();
+  }, [movieData?.id]);
+
+  // Fetch user's watched/watchlist status
+  useEffect(() => {
+    if (!isAuthenticated || !movieData?.id) return;
+    const fetchUserFilmStatus = async () => {
+      try {
+        const res = await fetch(`${API}/films/${movieData.id}/status`, {
+          credentials: 'include',
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setIsWatched(data.watched || false);
+          setIsInWatchlist(data.inWatchlist || false);
+          setUserRating(data.rating || 0);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    fetchUserFilmStatus();
+  }, [isAuthenticated, movieData?.id]);
+
+  // Ensure film exists in our DB before doing anything
+  const ensureFilmInDB = async () => {
+    if (!movieData) return null;
+    try {
+      const res = await fetch(`${API}/films/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          tmdbId: movieData.id,
+          title: movieData.title,
+          posterPath: movieData.poster_path,
+          backdropPath: movieData.backdrop_path,
+          releaseDate: movieData.release_date,
+          runtime: movieData.runtime,
+          overview: movieData.overview,
+          voteAverage: movieData.vote_average,
+          voteCount: movieData.vote_count,
+        }),
+      });
+      const data = await res.json();
+      return data.film || null;
+    } catch (e) {
+      console.error(e);
+      return null;
     }
+  };
+
+  const handleRate = async (rating: number) => {
+    if (!isAuthenticated) return;
     setUserRating(rating);
-    // TODO: Send to API
+    await ensureFilmInDB();
+    try {
+      await fetch(`${API}/films/${movieData!.id}/rate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ rating }),
+      });
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const handleWatch = () => {
-    if (!isAuthenticated) return;
-    setIsWatched(!isWatched);
-    // TODO: Send to API
+  const handleWatch = async () => {
+    if (!isAuthenticated || !movieData) return;
+    const newWatched = !isWatched;
+    setIsWatched(newWatched);
+    await ensureFilmInDB();
+    try {
+      await fetch(`${API}/films/${movieData.id}/watched`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ watched: newWatched }),
+      });
+    } catch (e) {
+      console.error(e);
+      setIsWatched(!newWatched); // revert on error
+    }
   };
 
-  const handleWatchlist = () => {
-    if (!isAuthenticated) return;
-    setIsInWatchlist(!isInWatchlist);
-    // TODO: Send to API
+  const handleWatchlist = async () => {
+    if (!isAuthenticated || !movieData) return;
+    const newWatchlist = !isInWatchlist;
+    setIsInWatchlist(newWatchlist);
+    await ensureFilmInDB();
+    try {
+      await fetch(`${API}/films/${movieData.id}/watchlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ inWatchlist: newWatchlist }),
+      });
+    } catch (e) {
+      console.error(e);
+      setIsInWatchlist(!newWatchlist); // revert on error
+    }
   };
 
-  const handleSubmitReview = () => {
-    if (!reviewContent.trim()) return;
-    // TODO: Send to API
-    setShowReviewModal(false);
-    setReviewContent('');
-    setHasSpoiler(false);
+  const handleSubmitReview = async () => {
+    if (!reviewContent.trim() || !movieData) return;
+    setSubmittingReview(true);
+    setReviewError('');
+    try {
+      await ensureFilmInDB();
+      const res = await fetch(`${API}/reviews`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          tmdbId: movieData.id,
+          content: reviewContent,
+          containsSpoilers: hasSpoiler,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit review');
+
+      // Add new review to list
+      setReviews(prev => [data.review, ...prev]);
+      setShowReviewModal(false);
+      setReviewContent('');
+      setHasSpoiler(false);
+    } catch (e) {
+      setReviewError(e instanceof Error ? e.message : 'Failed to submit review');
+    } finally {
+      setSubmittingReview(false);
+    }
   };
 
   if (loading) {
@@ -115,20 +242,16 @@ export function Film() {
     <div className="min-h-screen">
       {/* Hero Banner */}
       <div className="relative">
-        {/* Backdrop */}
         {movieData.backdrop_path && (
           <div
             className="absolute inset-0 h-[60vh] bg-cover bg-center"
-            style={{
-              backgroundImage: `url(${getBackdropUrl(movieData.backdrop_path, 'w1280')})`,
-            }}
+            style={{ backgroundImage: `url(${getBackdropUrl(movieData.backdrop_path, 'w1280')})` }}
           >
             <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0b] via-[#0a0a0b]/70 to-transparent" />
             <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0b]/90 to-transparent" />
           </div>
         )}
 
-        {/* Content */}
         <div className="relative z-10 pt-24 pb-12">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex flex-col md:flex-row gap-8">
@@ -154,36 +277,27 @@ export function Film() {
                 <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-2">
                   {movieData.title}
                 </h1>
-                
+
                 {movieData.original_title !== movieData.title && (
                   <p className="text-gray-400 mb-4">{movieData.original_title}</p>
                 )}
 
                 {movieData.tagline && (
-                  <p className="text-lg text-gray-300 italic mb-4">
-                    "{movieData.tagline}"
-                  </p>
+                  <p className="text-lg text-gray-300 italic mb-4">"{movieData.tagline}"</p>
                 )}
 
-                {/* Meta info */}
                 <div className="flex flex-wrap items-center gap-4 mb-6">
                   <div className="flex items-center gap-1">
                     <Star className="w-5 h-5 text-[#E8C547] fill-[#E8C547]" />
-                    <span className="text-lg font-medium text-white">
-                      {movieData.vote_average?.toFixed(1)}
-                    </span>
-                    <span className="text-sm text-gray-500">
-                      ({movieData.vote_count?.toLocaleString()} votes)
-                    </span>
+                    <span className="text-lg font-medium text-white">{movieData.vote_average?.toFixed(1)}</span>
+                    <span className="text-sm text-gray-500">({movieData.vote_count?.toLocaleString()} votes)</span>
                   </div>
-                  
                   {movieData.release_date && (
                     <div className="flex items-center gap-1 text-gray-400">
                       <Calendar className="w-4 h-4" />
                       <span>{formatYear(movieData.release_date)}</span>
                     </div>
                   )}
-                  
                   {movieData.runtime > 0 && (
                     <div className="flex items-center gap-1 text-gray-400">
                       <Clock className="w-4 h-4" />
@@ -192,14 +306,10 @@ export function Film() {
                   )}
                 </div>
 
-                {/* Genres */}
                 {movieData.genres && movieData.genres.length > 0 && (
                   <div className="flex flex-wrap gap-2 mb-6">
                     {movieData.genres.map((genre) => (
-                      <span
-                        key={genre.id}
-                        className="px-3 py-1 rounded-full text-sm bg-white/5 text-gray-300"
-                      >
+                      <span key={genre.id} className="px-3 py-1 rounded-full text-sm bg-white/5 text-gray-300">
                         {genre.name}
                       </span>
                     ))}
@@ -209,71 +319,36 @@ export function Film() {
                 {/* User actions */}
                 {isAuthenticated && (
                   <div className="flex flex-wrap items-center gap-4 mb-6">
-                    {/* Rate */}
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-400">Your rating:</span>
-                      <StarRating
-                        rating={userRating}
-                        interactive
-                        onRate={handleRate}
-                      />
+                      <StarRating rating={userRating} interactive onRate={handleRate} />
                     </div>
 
-                    {/* Watch button */}
                     <button
                       onClick={handleWatch}
                       className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                        isWatched
-                          ? 'bg-[#E8C547] text-[#0a0a0b]'
-                          : 'bg-white/10 text-white hover:bg-white/20'
+                        isWatched ? 'bg-[#E8C547] text-[#0a0a0b]' : 'bg-white/10 text-white hover:bg-white/20'
                       }`}
                     >
-                      {isWatched ? (
-                        <>
-                          <Check className="w-4 h-4" />
-                          Watched
-                        </>
-                      ) : (
-                        <>
-                          <Eye className="w-4 h-4" />
-                          Mark as Watched
-                        </>
-                      )}
+                      {isWatched ? <><Check className="w-4 h-4" />Watched</> : <><Eye className="w-4 h-4" />Mark as Watched</>}
                     </button>
 
-                    {/* Watchlist button */}
                     <button
                       onClick={handleWatchlist}
                       className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                        isInWatchlist
-                          ? 'bg-[#E8C547]/20 text-[#E8C547]'
-                          : 'bg-white/10 text-white hover:bg-white/20'
+                        isInWatchlist ? 'bg-[#E8C547]/20 text-[#E8C547]' : 'bg-white/10 text-white hover:bg-white/20'
                       }`}
                     >
-                      {isInWatchlist ? (
-                        <>
-                          <Check className="w-4 h-4" />
-                          In Watchlist
-                        </>
-                      ) : (
-                        <>
-                          <Plus className="w-4 h-4" />
-                          Add to Watchlist
-                        </>
-                      )}
+                      {isInWatchlist ? <><Check className="w-4 h-4" />In Watchlist</> : <><Plus className="w-4 h-4" />Add to Watchlist</>}
                     </button>
                   </div>
                 )}
 
-                {/* Overview */}
                 <div className="mb-6">
                   <h3 className="text-lg font-semibold text-white mb-2">Overview</h3>
-                  <p className="text-gray-300 leading-relaxed">
-                    {movieData.overview || 'No overview available.'}
-                  </p>
+                  <p className="text-gray-300 leading-relaxed">{movieData.overview || 'No overview available.'}</p>
                 </div>
 
-                {/* Director */}
                 {director && (
                   <div className="mb-4">
                     <span className="text-gray-400">Director: </span>
@@ -292,8 +367,7 @@ export function Film() {
         {trailerKey && (
           <section>
             <h2 className="text-2xl font-semibold text-white mb-6 flex items-center gap-2">
-              <Play className="w-6 h-6 text-[#E8C547]" />
-              Trailer
+              <Play className="w-6 h-6 text-[#E8C547]" />Trailer
             </h2>
             <div className="trailer-container max-w-3xl">
               <iframe
@@ -310,8 +384,7 @@ export function Film() {
         {cast.length > 0 && (
           <section>
             <h2 className="text-2xl font-semibold text-white mb-6 flex items-center gap-2">
-              <User className="w-6 h-6 text-[#E8C547]" />
-              Cast
+              <User className="w-6 h-6 text-[#E8C547]" />Cast
             </h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
               {cast.map((actor: { name: string; profile_path: string; character: string }, index: number) => (
@@ -343,34 +416,41 @@ export function Film() {
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-2xl font-semibold text-white flex items-center gap-2">
               <MessageCircle className="w-6 h-6 text-[#E8C547]" />
-              Reviews
+              Reviews {reviews.length > 0 && <span className="text-base text-gray-400 font-normal">({reviews.length})</span>}
             </h2>
             {isAuthenticated && (
-              <button
-                onClick={() => setShowReviewModal(true)}
-                className="btn-primary text-sm"
-              >
+              <button onClick={() => setShowReviewModal(true)} className="btn-primary text-sm">
                 Write a Review
               </button>
             )}
           </div>
-          
-          {/* Review placeholder */}
-          <div className="review-card p-6 text-center">
-            <p className="text-gray-400">
-              {isAuthenticated 
-                ? 'Be the first to review this film!' 
-                : 'Log in to write a review'}
-            </p>
-          </div>
+
+          {reviewsLoading ? (
+            <div className="space-y-4">
+              {Array.from({ length: 2 }, (_, i) => (
+                <div key={i} className="h-32 bg-white/5 rounded-xl animate-pulse" />
+              ))}
+            </div>
+          ) : reviews.length === 0 ? (
+            <div className="review-card p-6 text-center">
+              <p className="text-gray-400">
+                {isAuthenticated ? 'Be the first to review this film!' : 'Log in to write a review'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {reviews.map((review) => (
+                <ReviewCard key={review.id} review={review} />
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Similar Movies */}
         {similarMovies.length > 0 && (
           <section>
             <h2 className="text-2xl font-semibold text-white mb-6 flex items-center gap-2">
-              <Star className="w-6 h-6 text-[#E8C547]" />
-              Similar Movies
+              <Star className="w-6 h-6 text-[#E8C547]" />Similar Movies
             </h2>
             <FilmGrid
               films={similarMovies.map((m: unknown) => ({
@@ -390,13 +470,18 @@ export function Film() {
         <div className="modal-overlay" onClick={() => setShowReviewModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-xl font-semibold text-white mb-4">Write a Review</h3>
+            {reviewError && (
+              <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                {reviewError}
+              </div>
+            )}
             <textarea
               value={reviewContent}
               onChange={(e) => setReviewContent(e.target.value)}
-              placeholder="Share your thoughts on this film..."
+              placeholder="Share your thoughts on this film... (min 10 characters)"
               className="input-dark w-full h-32 resize-none mb-4"
             />
-            <label className="flex items-center gap-2 mb-4 text-sm text-gray-400">
+            <label className="flex items-center gap-2 mb-4 text-sm text-gray-400 cursor-pointer">
               <input
                 type="checkbox"
                 checked={hasSpoiler}
@@ -406,18 +491,15 @@ export function Film() {
               Contains spoilers
             </label>
             <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowReviewModal(false)}
-                className="btn-secondary"
-              >
-                Cancel
-              </button>
+              <button onClick={() => setShowReviewModal(false)} className="btn-secondary">Cancel</button>
               <button
                 onClick={handleSubmitReview}
-                className="btn-primary"
-                disabled={!reviewContent.trim()}
+                className="btn-primary flex items-center gap-2"
+                disabled={!reviewContent.trim() || submittingReview}
               >
-                Submit Review
+                {submittingReview
+                  ? <div className="w-4 h-4 border-2 border-[#0a0a0b] border-t-transparent rounded-full animate-spin" />
+                  : 'Submit Review'}
               </button>
             </div>
           </div>

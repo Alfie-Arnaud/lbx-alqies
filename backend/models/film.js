@@ -1,4 +1,22 @@
 const { getDatabase } = require('../db/init');
+const https = require('https');
+
+function fetchTMDBRating(tmdbId) {
+    return new Promise((resolve) => {
+        const key = process.env.TMDB_API_KEY;
+        if (!key) return resolve({ vote_average: 0, vote_count: 0 });
+        https.get(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${key}`, r => {
+            let d = '';
+            r.on('data', c => d += c);
+            r.on('end', () => {
+                try {
+                    const m = JSON.parse(d);
+                    resolve({ vote_average: m.vote_average || 0, vote_count: m.vote_count || 0 });
+                } catch { resolve({ vote_average: 0, vote_count: 0 }); }
+            });
+        }).on('error', () => resolve({ vote_average: 0, vote_count: 0 }));
+    });
+}
 
 class Film {
     static findByTmdbId(tmdbId) {
@@ -14,10 +32,10 @@ class Film {
     static createOrUpdate(filmData) {
         const db = getDatabase();
         const existing = this.findByTmdbId(filmData.tmdbId);
-        
+
         if (existing) {
             db.prepare(`
-                UPDATE films 
+                UPDATE films
                 SET title = ?, original_title = ?, overview = ?, poster_path = ?,
                     backdrop_path = ?, release_date = ?, runtime = ?, genres = ?,
                     tagline = ?, vote_average = ?, vote_count = ?, media_type = ?,
@@ -25,7 +43,7 @@ class Film {
                 WHERE tmdb_id = ?
             `).run(
                 filmData.title,
-                filmData.originalTitle,
+                filmData.originalTitle || filmData.title,
                 filmData.overview,
                 filmData.posterPath,
                 filmData.backdropPath,
@@ -48,7 +66,7 @@ class Film {
             `).run(
                 filmData.tmdbId,
                 filmData.title,
-                filmData.originalTitle,
+                filmData.originalTitle || filmData.title,
                 filmData.overview,
                 filmData.posterPath,
                 filmData.backdropPath,
@@ -64,16 +82,16 @@ class Film {
         }
     }
 
-    static markAsWatched(userId, filmId, tmdbId, rating = null, watchedDate = null) {
+    static async markAsWatched(userId, filmId, tmdbId, rating = null, watchedDate = null) {
         const db = getDatabase();
         const existing = db.prepare(`
             SELECT * FROM user_films WHERE user_id = ? AND film_id = ?
         `).get(userId, filmId);
-        
+
         if (existing) {
             db.prepare(`
-                UPDATE user_films 
-                SET is_watched = 1, rating = COALESCE(?, rating), 
+                UPDATE user_films
+                SET is_watched = 1, rating = COALESCE(?, rating),
                     watched_date = COALESCE(?, watched_date),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE user_id = ? AND film_id = ?
@@ -84,11 +102,31 @@ class Film {
                 VALUES (?, ?, ?, 1, ?, ?)
             `).run(userId, filmId, tmdbId, rating, watchedDate);
         }
-        
-        // Add to activity log
+
+        // Auto-update TMDB rating if film has 0 or null vote_average
+        try {
+            const film = db.prepare('SELECT vote_average FROM films WHERE id = ?').get(filmId);
+            if (!film || !film.vote_average) {
+                const tmdbData = await fetchTMDBRating(tmdbId);
+                if (tmdbData.vote_average > 0) {
+                    db.prepare('UPDATE films SET vote_average = ?, vote_count = ? WHERE id = ?')
+                        .run(tmdbData.vote_average, tmdbData.vote_count, filmId);
+                }
+            }
+        } catch (e) {
+            console.error('Failed to auto-update TMDB rating:', e);
+        }
+
         this.addActivity(userId, 'watched', filmId, 'film', { tmdbId });
-        
         return this.getUserFilm(userId, filmId);
+    }
+
+    static unmarkAsWatched(userId, filmId) {
+        const db = getDatabase();
+        db.prepare(`
+            UPDATE user_films SET is_watched = 0, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND film_id = ?
+        `).run(userId, filmId);
     }
 
     static rateFilm(userId, filmId, tmdbId, rating) {
@@ -96,11 +134,10 @@ class Film {
         const existing = db.prepare(`
             SELECT * FROM user_films WHERE user_id = ? AND film_id = ?
         `).get(userId, filmId);
-        
+
         if (existing) {
             db.prepare(`
-                UPDATE user_films 
-                SET rating = ?, updated_at = CURRENT_TIMESTAMP
+                UPDATE user_films SET rating = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE user_id = ? AND film_id = ?
             `).run(rating, userId, filmId);
         } else {
@@ -109,10 +146,8 @@ class Film {
                 VALUES (?, ?, ?, ?)
             `).run(userId, filmId, tmdbId, rating);
         }
-        
-        // Add to activity log
+
         this.addActivity(userId, 'rated', filmId, 'film', { tmdbId, rating });
-        
         return this.getUserFilm(userId, filmId);
     }
 
@@ -120,15 +155,11 @@ class Film {
         const db = getDatabase();
         try {
             db.prepare(`
-                INSERT INTO watchlist (user_id, film_id, tmdb_id)
-                VALUES (?, ?, ?)
+                INSERT INTO watchlist (user_id, film_id, tmdb_id) VALUES (?, ?, ?)
             `).run(userId, filmId, tmdbId);
-            
-            // Add to activity log
             this.addActivity(userId, 'watchlisted', filmId, 'film', { tmdbId });
-            
             return true;
-        } catch (error) {
+        } catch {
             return false;
         }
     }
@@ -143,10 +174,9 @@ class Film {
 
     static isInWatchlist(userId, filmId) {
         const db = getDatabase();
-        const result = db.prepare(`
+        return !!db.prepare(`
             SELECT 1 FROM watchlist WHERE user_id = ? AND film_id = ?
         `).get(userId, filmId);
-        return !!result;
     }
 
     static getUserFilm(userId, filmId) {
@@ -162,7 +192,7 @@ class Film {
     static getUserWatchedFilms(userId, limit = 50, offset = 0) {
         const db = getDatabase();
         return db.prepare(`
-            SELECT uf.*, f.title, f.poster_path, f.release_date, f.runtime
+            SELECT uf.*, f.title, f.poster_path, f.release_date, f.runtime, f.vote_average
             FROM user_films uf
             JOIN films f ON uf.film_id = f.id
             WHERE uf.user_id = ? AND uf.is_watched = 1
@@ -199,13 +229,9 @@ class Film {
         const db = getDatabase();
         const result = db.prepare(`
             SELECT AVG(rating) as avg_rating, COUNT(*) as rating_count
-            FROM user_films
-            WHERE film_id = ? AND rating IS NOT NULL
+            FROM user_films WHERE film_id = ? AND rating IS NOT NULL
         `).get(filmId);
-        return {
-            average: result.avg_rating || 0,
-            count: result.rating_count || 0
-        };
+        return { average: result.avg_rating || 0, count: result.rating_count || 0 };
     }
 
     static addActivity(userId, activityType, targetId, targetType, metadata = {}) {

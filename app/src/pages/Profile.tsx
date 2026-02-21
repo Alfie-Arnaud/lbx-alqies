@@ -70,6 +70,10 @@ export function Profile() {
   const [activeTab, setActiveTab] = useState<'watched' | 'reviews' | 'watchlist' | 'lists'>('watched');
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [watchedFilms, setWatchedFilms] = useState<any[]>([]);
+  const [watchedLoading, setWatchedLoading] = useState(false);
+  const [watchlistFilms, setWatchlistFilms] = useState<any[]>([]);
+  const [watchlistLoading, setWatchlistLoading] = useState(false);
 
   // Edit mode
   const [editing, setEditing] = useState(false);
@@ -123,6 +127,36 @@ export function Profile() {
     };
     fetchReviews();
   }, [activeTab, username]);
+
+  // Fetch watched films
+  useEffect(() => {
+    if (activeTab !== 'watched' || !isOwnProfile) return;
+    const fetchWatched = async () => {
+      setWatchedLoading(true);
+      try {
+        const res = await fetch(`${API}/films/user/watched`, { credentials: 'include' });
+        const data = await res.json();
+        setWatchedFilms(data.films || []);
+      } catch (e) { console.error(e); }
+      finally { setWatchedLoading(false); }
+    };
+    fetchWatched();
+  }, [activeTab, isOwnProfile]);
+
+  // Fetch watchlist
+  useEffect(() => {
+    if (activeTab !== 'watchlist' || !isOwnProfile) return;
+    const fetchWatchlist = async () => {
+      setWatchlistLoading(true);
+      try {
+        const res = await fetch(`${API}/films/user/watchlist`, { credentials: 'include' });
+        const data = await res.json();
+        setWatchlistFilms(data.films || []);
+      } catch (e) { console.error(e); }
+      finally { setWatchlistLoading(false); }
+    };
+    fetchWatchlist();
+  }, [activeTab, isOwnProfile]);
 
   // TMDB film search with debounce
   useEffect(() => {
@@ -504,7 +538,19 @@ export function Profile() {
         {/* Tab Content */}
         <div className="pb-12">
           {activeTab === 'watched' && (
-            <FilmGrid films={[]} emptyMessage={isOwnProfile ? "You haven't watched any films yet." : `${profile.displayName} hasn't watched any films yet.`} />
+            <FilmGrid
+              films={watchedFilms.map(f => ({
+                tmdbId: f.tmdb_id,
+                title: f.title,
+                posterPath: f.poster_path,
+                releaseDate: f.release_date,
+                voteAverage: f.vote_average,
+                userRating: f.rating,
+                isWatched: true,
+              }))}
+              loading={watchedLoading}
+              emptyMessage={isOwnProfile ? "You haven't watched any films yet." : `${profile.displayName} hasn't watched any films yet.`}
+            />
           )}
           {activeTab === 'reviews' && (
             reviewsLoading ? (
@@ -520,7 +566,17 @@ export function Profile() {
             )
           )}
           {activeTab === 'watchlist' && (
-            <FilmGrid films={[]} emptyMessage={isOwnProfile ? "Your watchlist is empty." : `${profile.displayName}'s watchlist is empty.`} />
+            <FilmGrid
+              films={watchlistFilms.map(f => ({
+                tmdbId: f.tmdb_id,
+                title: f.title,
+                posterPath: f.poster_path,
+                releaseDate: f.release_date,
+                isInWatchlist: true,
+              }))}
+              loading={watchlistLoading}
+              emptyMessage={isOwnProfile ? "Your watchlist is empty." : `${profile.displayName}'s watchlist is empty.`}
+            />
           )}
           {activeTab === 'lists' && (
             <div className="text-center py-12">
