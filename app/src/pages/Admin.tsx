@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  Shield, Users, Film, MessageSquare, BarChart3, 
-  Crown, UserX, UserCheck, Megaphone, Terminal,
-  Search, Send
+import {
+  Shield, Users, Film, MessageSquare, BarChart3,
+  Crown, UserX, UserCheck, Terminal,
+  Search, Send, Megaphone, X, ShieldCheck
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { RoleBadge } from '@/components/RoleBadge';
+
+const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 interface SiteStats {
   totalUsers: number;
@@ -15,7 +17,7 @@ interface SiteStats {
   reviewsWritten: number;
 }
 
-interface User {
+interface UserItem {
   id: number;
   email: string;
   username: string;
@@ -25,109 +27,159 @@ interface User {
   createdAt: string;
 }
 
+interface Announcement {
+  id: number;
+  title: string;
+  content: string;
+  created_by_username: string;
+  created_at: string;
+}
+
+const VALID_ROLES = ['free', 'pro', 'patron', 'lifetime', 'admin', 'higher_admin'];
+
 export function Admin() {
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'commands'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'broadcast' | 'commands'>('overview');
   const [stats, setStats] = useState<SiteStats | null>(null);
-  const [users, setUsers] = useState<User[]>([]);
+  const [users, setUsers] = useState<UserItem[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [command, setCommand] = useState('');
   const [commandOutput, setCommandOutput] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Redirect if not owner
+  // Broadcast form
+  const [broadcastTitle, setBroadcastTitle] = useState('');
+  const [broadcastContent, setBroadcastContent] = useState('');
+  const [broadcastSending, setBroadcastSending] = useState(false);
+  const [broadcastMsg, setBroadcastMsg] = useState('');
+
   useEffect(() => {
-    if (isAuthenticated && user?.role !== 'owner') {
+    if (isAuthenticated && user?.role !== 'owner' && user?.role !== 'higher_admin') {
       navigate('/');
     }
   }, [isAuthenticated, user, navigate]);
 
-  // Fetch stats
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-        const response = await fetch(`${API_BASE_URL}/admin/stats`, {
-          credentials: 'include',
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setStats(data.stats);
-        }
-      } catch (error) {
-        console.error('Failed to fetch stats:', error);
-      }
-    };
+    if (!isAuthenticated) return;
+    fetch(`${API}/admin/stats`, { credentials: 'include' })
+      .then(r => r.json()).then(d => setStats(d.stats)).catch(console.error);
+  }, [isAuthenticated]);
 
-    if (isAuthenticated && user?.role === 'owner') {
-      fetchStats();
-    }
-  }, [isAuthenticated, user]);
-
-  // Fetch users
   useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-        const response = await fetch(`${API_BASE_URL}/admin/users`, {
-          credentials: 'include',
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setUsers(data.users);
-        }
-      } catch (error) {
-        console.error('Failed to fetch users:', error);
-      }
-    };
+    if (activeTab !== 'users' || !isAuthenticated) return;
+    fetch(`${API}/admin/users`, { credentials: 'include' })
+      .then(r => r.json()).then(d => setUsers(d.users || [])).catch(console.error);
+  }, [activeTab, isAuthenticated]);
 
-    if (activeTab === 'users' && isAuthenticated) {
-      fetchUsers();
-    }
+  useEffect(() => {
+    if (activeTab !== 'broadcast' || !isAuthenticated) return;
+    fetch(`${API}/admin/announcements`, { credentials: 'include' })
+      .then(r => r.json()).then(d => setAnnouncements(d.announcements || [])).catch(console.error);
   }, [activeTab, isAuthenticated]);
 
   const handleCommand = async () => {
     if (!command.trim()) return;
-
     setLoading(true);
     setCommandOutput(prev => [...prev, `> ${command}`]);
-
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-      const response = await fetch(`${API_BASE_URL}/admin/command`, {
+      const res = await fetch(`${API}/admin/command`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command }),
       });
-
-      const data = await response.json();
-      
-      if (response.ok) {
-        setCommandOutput(prev => [...prev, data.message || 'Command executed successfully']);
+      const data = await res.json();
+      if (res.ok) {
+        if (data.stats) {
+          setCommandOutput(prev => [...prev,
+            `Users: ${data.stats.totalUsers} | Films: ${data.stats.totalFilms} | Logged: ${data.stats.filmsLogged} | Reviews: ${data.stats.reviewsWritten}`
+          ]);
+        } else {
+          setCommandOutput(prev => [...prev, data.message || 'Done']);
+          if (data.user) setCommandOutput(prev => [...prev, `  → @${data.user.username} is now [${data.user.role}]`]);
+        }
       } else {
         setCommandOutput(prev => [...prev, `Error: ${data.error || 'Command failed'}`]);
       }
-    } catch (error) {
-      setCommandOutput(prev => [...prev, `Error: ${error instanceof Error ? error.message : 'Unknown error'}`]);
+    } catch (e) {
+      setCommandOutput(prev => [...prev, `Error: ${e instanceof Error ? e.message : 'Unknown error'}`]);
     } finally {
       setCommand('');
       setLoading(false);
     }
   };
 
-  const filteredUsers = users.filter(u => 
+  const handleBroadcast = async () => {
+    if (!broadcastTitle.trim() || !broadcastContent.trim()) return;
+    setBroadcastSending(true);
+    setBroadcastMsg('');
+    try {
+      const res = await fetch(`${API}/admin/broadcast`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: broadcastTitle, content: broadcastContent }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setBroadcastMsg('✓ Broadcast sent successfully!');
+        setBroadcastTitle('');
+        setBroadcastContent('');
+        // Refresh announcements
+        fetch(`${API}/admin/announcements`, { credentials: 'include' })
+          .then(r => r.json()).then(d => setAnnouncements(d.announcements || []));
+      } else {
+        setBroadcastMsg(`Error: ${data.error}`);
+      }
+    } catch (e) {
+      setBroadcastMsg('Error: Failed to send broadcast');
+    } finally {
+      setBroadcastSending(false);
+    }
+  };
+
+  const deactivateAnnouncement = async (id: number) => {
+    await fetch(`${API}/admin/announcements/${id}/deactivate`, {
+      method: 'PATCH', credentials: 'include'
+    });
+    setAnnouncements(prev => prev.filter(a => a.id !== id));
+  };
+
+  const changeUserRole = async (username: string, role: string) => {
+    const endpoint = role === 'free' ? '/admin/demote' : '/admin/promote';
+    const res = await fetch(`${API}${endpoint}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, role }),
+    });
+    if (res.ok) {
+      setUsers(prev => prev.map(u => u.username === username ? { ...u, role } : u));
+    }
+  };
+
+  const toggleBan = async (u: UserItem) => {
+    const endpoint = u.isBanned ? '/admin/unban' : '/admin/ban';
+    const res = await fetch(`${API}${endpoint}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u.username }),
+    });
+    if (res.ok) {
+      setUsers(prev => prev.map(x => x.username === u.username ? { ...x, isBanned: !u.isBanned } : x));
+    }
+  };
+
+  const filteredUsers = users.filter(u =>
     u.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
     u.email.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  if (!isAuthenticated || user?.role !== 'owner') {
-    return (
-      <div className="min-h-screen pt-24 text-center">
-        <p className="text-gray-400">Access denied</p>
-      </div>
-    );
+  if (!isAuthenticated || (user?.role !== 'owner' && user?.role !== 'higher_admin')) {
+    return <div className="min-h-screen pt-24 text-center"><p className="text-gray-400">Access denied</p></div>;
   }
 
   return (
@@ -140,7 +192,7 @@ export function Admin() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-white">Admin Panel</h1>
-            <p className="text-gray-400">Manage your CinemaLog instance</p>
+            <p className="text-gray-400">Manage Alfie's Basement</p>
           </div>
         </div>
 
@@ -149,163 +201,186 @@ export function Admin() {
           {[
             { id: 'overview', label: 'Overview', icon: BarChart3 },
             { id: 'users', label: 'Users', icon: Users },
+            { id: 'broadcast', label: 'Broadcast', icon: Megaphone },
             { id: 'commands', label: 'Commands', icon: Terminal },
           ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as typeof activeTab)}
+            <button key={tab.id} onClick={() => setActiveTab(tab.id as typeof activeTab)}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
-                activeTab === tab.id
-                  ? 'text-[#E8C547] border-b-2 border-[#E8C547]'
-                  : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <tab.icon className="w-4 h-4" />
-              {tab.label}
+                activeTab === tab.id ? 'text-[#E8C547] border-b-2 border-[#E8C547]' : 'text-gray-400 hover:text-white'
+              }`}>
+              <tab.icon className="w-4 h-4" />{tab.label}
             </button>
           ))}
         </div>
 
-        {/* Overview Tab */}
+        {/* Overview */}
         {activeTab === 'overview' && stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="glass p-6 rounded-xl">
-              <Users className="w-8 h-8 text-[#E8C547] mb-4" />
-              <p className="text-3xl font-bold text-white">{stats.totalUsers}</p>
-              <p className="text-sm text-gray-400">Total Users</p>
-            </div>
-            <div className="glass p-6 rounded-xl">
-              <Film className="w-8 h-8 text-[#E8C547] mb-4" />
-              <p className="text-3xl font-bold text-white">{stats.totalFilms}</p>
-              <p className="text-sm text-gray-400">Films in Database</p>
-            </div>
-            <div className="glass p-6 rounded-xl">
-              <BarChart3 className="w-8 h-8 text-[#E8C547] mb-4" />
-              <p className="text-3xl font-bold text-white">{stats.filmsLogged}</p>
-              <p className="text-sm text-gray-400">Films Logged</p>
-            </div>
-            <div className="glass p-6 rounded-xl">
-              <MessageSquare className="w-8 h-8 text-[#E8C547] mb-4" />
-              <p className="text-3xl font-bold text-white">{stats.reviewsWritten}</p>
-              <p className="text-sm text-gray-400">Reviews Written</p>
-            </div>
+            {[
+              { icon: Users, value: stats.totalUsers, label: 'Total Users' },
+              { icon: Film, value: stats.totalFilms, label: 'Films in Database' },
+              { icon: BarChart3, value: stats.filmsLogged, label: 'Films Logged' },
+              { icon: MessageSquare, value: stats.reviewsWritten, label: 'Reviews Written' },
+            ].map(({ icon: Icon, value, label }) => (
+              <div key={label} className="glass p-6 rounded-xl">
+                <Icon className="w-8 h-8 text-[#E8C547] mb-4" />
+                <p className="text-3xl font-bold text-white">{value}</p>
+                <p className="text-sm text-gray-400">{label}</p>
+              </div>
+            ))}
           </div>
         )}
 
-        {/* Users Tab */}
+        {/* Users */}
         {activeTab === 'users' && (
           <div className="space-y-4">
-            {/* Search */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-              <input
-                type="text"
-                placeholder="Search users..."
-                value={searchQuery}
+              <input type="text" placeholder="Search users..." value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="input-dark pl-10 w-full max-w-md"
-              />
+                className="input-dark pl-10 w-full max-w-md" />
             </div>
 
-            {/* Users List */}
             <div className="space-y-2">
               {filteredUsers.map((u) => (
-                <div
-                  key={u.id}
-                  className="flex items-center justify-between p-4 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
-                >
+                <div key={u.id} className="flex items-center justify-between p-4 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#E8C547] to-[#00C8FF] flex items-center justify-center text-sm font-medium text-[#0a0a0b]">
                       {u.displayName?.[0]?.toUpperCase()}
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-white">{u.displayName}</span>
                         <RoleBadge role={u.role} size="sm" />
-                        {u.isBanned && (
-                          <span className="px-2 py-0.5 rounded-full text-xs bg-red-500/20 text-red-400">
-                            Banned
-                          </span>
-                        )}
+                        {u.isBanned && <span className="px-2 py-0.5 rounded-full text-xs bg-red-500/20 text-red-400">Banned</span>}
                       </div>
                       <p className="text-sm text-gray-500">@{u.username} • {u.email}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {/* Quick actions would go here */}
-                  </div>
+
+                  {u.role !== 'owner' && (
+                    <div className="flex items-center gap-2">
+                      {/* Role selector */}
+                      <select
+                        value={u.role}
+                        onChange={(e) => changeUserRole(u.username, e.target.value)}
+                        className="input-dark text-xs py-1 px-2"
+                      >
+                        {VALID_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                      {/* Ban/Unban */}
+                      <button onClick={() => toggleBan(u)}
+                        className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                          u.isBanned ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                        }`}>
+                        {u.isBanned ? <><UserCheck className="w-3 h-3" />Unban</> : <><UserX className="w-3 h-3" />Ban</>}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* Commands Tab */}
-        {activeTab === 'commands' && (
-          <div className="space-y-4">
-            <div className="glass p-4 rounded-xl">
+        {/* Broadcast */}
+        {activeTab === 'broadcast' && (
+          <div className="space-y-6">
+            <div className="glass p-6 rounded-xl">
               <h3 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
-                <Terminal className="w-5 h-5 text-[#E8C547]" />
-                Owner Commands
+                <Megaphone className="w-5 h-5 text-[#E8C547]" />New Broadcast
               </h3>
-              
-              {/* Command input */}
-              <div className="flex gap-2 mb-4">
-                <input
-                  type="text"
-                  value={command}
-                  onChange={(e) => setCommand(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleCommand()}
-                  placeholder="Enter command (e.g., /stats, /promote @user patron)"
-                  className="input-dark flex-1"
-                />
-                <button
-                  onClick={handleCommand}
-                  disabled={loading}
-                  className="btn-primary flex items-center gap-2"
-                >
-                  {loading ? (
-                    <div className="w-4 h-4 border-2 border-[#0a0a0b] border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4" />
-                      Execute
-                    </>
-                  )}
+              {broadcastMsg && (
+                <div className={`mb-4 p-3 rounded-lg text-sm ${broadcastMsg.startsWith('✓') ? 'bg-green-500/10 border border-green-500/20 text-green-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>
+                  {broadcastMsg}
+                </div>
+              )}
+              <div className="space-y-3">
+                <input className="input-dark w-full" placeholder="Announcement title..."
+                  value={broadcastTitle} onChange={e => setBroadcastTitle(e.target.value)} />
+                <textarea className="input-dark w-full resize-none" rows={4}
+                  placeholder="Write your announcement..." value={broadcastContent}
+                  onChange={e => setBroadcastContent(e.target.value)} />
+                <button onClick={handleBroadcast} disabled={broadcastSending || !broadcastTitle || !broadcastContent}
+                  className="btn-primary flex items-center gap-2">
+                  {broadcastSending
+                    ? <div className="w-4 h-4 border-2 border-[#0a0a0b] border-t-transparent rounded-full animate-spin" />
+                    : <><Send className="w-4 h-4" />Send Broadcast</>}
                 </button>
               </div>
+            </div>
 
-              {/* Command output */}
-              {commandOutput.length > 0 && (
-                <div className="bg-black/50 rounded-lg p-4 font-mono text-sm space-y-1 max-h-64 overflow-y-auto">
-                  {commandOutput.map((line, i) => (
-                    <div
-                      key={i}
-                      className={line.startsWith('>') ? 'text-[#E8C547]' : line.startsWith('Error') ? 'text-red-400' : 'text-gray-300'}
-                    >
-                      {line}
+            {/* Active announcements */}
+            {announcements.length > 0 && (
+              <div className="glass p-6 rounded-xl">
+                <h3 className="text-lg font-medium text-white mb-4">Active Announcements</h3>
+                <div className="space-y-3">
+                  {announcements.map(a => (
+                    <div key={a.id} className="flex items-start justify-between gap-4 p-3 rounded-lg bg-white/5">
+                      <div>
+                        <p className="font-medium text-white text-sm">{a.title}</p>
+                        <p className="text-gray-400 text-sm mt-0.5">{a.content}</p>
+                        <p className="text-xs text-gray-600 mt-1">by @{a.created_by_username}</p>
+                      </div>
+                      <button onClick={() => deactivateAnnouncement(a.id)}
+                        className="text-gray-500 hover:text-red-400 transition-colors flex-shrink-0">
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
                   ))}
                 </div>
-              )}
+              </div>
+            )}
+          </div>
+        )}
 
-              {/* Command reference */}
-              <div className="mt-4 pt-4 border-t border-white/10">
-                <h4 className="text-sm font-medium text-gray-400 mb-2">Available Commands:</h4>
-                <div className="grid md:grid-cols-2 gap-2 text-sm">
-                  <code className="text-gray-300">/stats</code>
-                  <span className="text-gray-500">Show site statistics</span>
-                  <code className="text-gray-300">/promote @user {'<patron|pro|lifetime>'}</code>
-                  <span className="text-gray-500">Promote a user</span>
-                  <code className="text-gray-300">/demote @user</code>
-                  <span className="text-gray-500">Demote a user to free</span>
-                  <code className="text-gray-300">/ban @user</code>
-                  <span className="text-gray-500">Ban a user</span>
-                  <code className="text-gray-300">/unban @user</code>
-                  <span className="text-gray-500">Unban a user</span>
-                  <code className="text-gray-300">/broadcast {'<message>'}</code>
-                  <span className="text-gray-500">Send site-wide announcement</span>
-                </div>
+        {/* Commands */}
+        {activeTab === 'commands' && (
+          <div className="glass p-4 rounded-xl space-y-4">
+            <h3 className="text-lg font-medium text-white flex items-center gap-2">
+              <Terminal className="w-5 h-5 text-[#E8C547]" />Owner Commands
+            </h3>
+
+            <div className="flex gap-2">
+              <input type="text" value={command} onChange={(e) => setCommand(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCommand()}
+                placeholder="/promote @user patron | /ban @user | /broadcast hello!"
+                className="input-dark flex-1" />
+              <button onClick={handleCommand} disabled={loading} className="btn-primary flex items-center gap-2">
+                {loading
+                  ? <div className="w-4 h-4 border-2 border-[#0a0a0b] border-t-transparent rounded-full animate-spin" />
+                  : <><Send className="w-4 h-4" />Run</>}
+              </button>
+            </div>
+
+            {commandOutput.length > 0 && (
+              <div className="bg-black/50 rounded-lg p-4 font-mono text-sm space-y-1 max-h-64 overflow-y-auto">
+                {commandOutput.map((line, i) => (
+                  <div key={i} className={
+                    line.startsWith('>') ? 'text-[#E8C547]' :
+                    line.startsWith('Error') ? 'text-red-400' :
+                    line.startsWith('  →') ? 'text-gray-500' : 'text-gray-300'
+                  }>{line}</div>
+                ))}
+              </div>
+            )}
+
+            <div className="pt-4 border-t border-white/10">
+              <h4 className="text-sm font-medium text-gray-400 mb-3">Available Commands:</h4>
+              <div className="space-y-1.5 text-sm">
+                {[
+                  ['/stats', 'Show site statistics'],
+                  ['/promote @user <role>', 'Roles: free | pro | patron | lifetime | admin | higher_admin'],
+                  ['/demote @user', 'Reset user to free'],
+                  ['/ban @user', 'Ban a user'],
+                  ['/unban @user', 'Unban a user'],
+                  ['/broadcast <message>', 'Send site-wide announcement (title: "Announcement")'],
+                ].map(([cmd, desc]) => (
+                  <div key={cmd} className="flex gap-4">
+                    <code className="text-[#E8C547] w-56 flex-shrink-0">{cmd}</code>
+                    <span className="text-gray-500">{desc}</span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
