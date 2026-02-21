@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { TrendingUp, Filter, ChevronLeft, Star, Calendar } from 'lucide-react';
 import { useMoviesBatch } from '@/hooks/useTMDB';
@@ -15,7 +15,8 @@ export function Top250Page() {
   const [visibleCount, setVisibleCount] = useState(50);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   
-  const { data: movies, loading, progress } = useMoviesBatch(UNIQUE_TOP_250_TMDB_IDS.slice(0, visibleCount));
+  const visibleIds = useMemo(() => UNIQUE_TOP_250_TMDB_IDS.slice(0, visibleCount), [visibleCount]);
+  const { data: movies, loading, progress } = useMoviesBatch(visibleIds);
 
   // Intersection Observer for infinite scroll
   useEffect(() => {

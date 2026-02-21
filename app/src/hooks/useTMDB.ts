@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import * as tmdb from '@/utils/tmdb';
 
 // Hook for searching movies/TV
@@ -51,7 +51,6 @@ export function useMovieDetails(movieId: number | null) {
       setError(null);
       
       try {
-        // Check cache first
         const cached = tmdb.getCachedData(`movie_${movieId}`);
         if (cached) {
           setData(cached);
@@ -152,6 +151,9 @@ export function useMoviesBatch(ids: number[]) {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  // Convert array to string to prevent infinite re-renders
+  const idsKey = ids.join(',');
+
   useEffect(() => {
     if (ids.length === 0) {
       setData({});
@@ -172,7 +174,6 @@ export function useMoviesBatch(ids: number[]) {
           
           await Promise.all(
             batch.map(async (id) => {
-              // Check cache first
               const cached = tmdb.getCachedData(`movie_${id}`);
               if (cached) {
                 results[id] = cached;
@@ -191,7 +192,6 @@ export function useMoviesBatch(ids: number[]) {
           
           setProgress(Math.min(((i + batchSize) / ids.length) * 100, 100));
           
-          // Delay between batches
           if (i + batchSize < ids.length) {
             await new Promise(resolve => setTimeout(resolve, 100));
           }
@@ -206,7 +206,8 @@ export function useMoviesBatch(ids: number[]) {
     };
 
     fetchData();
-  }, [ids]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey]);
 
   return { data, loading, progress, error };
 }
