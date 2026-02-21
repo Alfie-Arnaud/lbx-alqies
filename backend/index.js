@@ -10,6 +10,7 @@ const authRoutes = require('./routes/auth');
 const filmRoutes = require('./routes/films');
 const reviewRoutes = require('./routes/reviews');
 const adminRoutes = require('./routes/admin');
+const uploadRoutes = require('./routes/upload');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -48,6 +49,8 @@ app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/films', filmRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/upload', uploadRoutes);
+app.use('/uploads', express.static('uploads'));
 // Error handling
 app.use((err, req, res, next) => {
     console.error('Error:', err);

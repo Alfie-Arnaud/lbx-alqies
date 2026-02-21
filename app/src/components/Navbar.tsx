@@ -4,6 +4,13 @@ import { Search, Film, User, LogOut, Menu, X, Crown, Shield } from 'lucide-react
 import { useAuth } from '@/hooks/useAuth';
 import { RoleBadge } from './RoleBadge';
 
+const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+
+const getAvatarUrl = (url: string | null) => {
+  if (!url) return null;
+  return url.startsWith('http') ? url : `${API.replace('/api', '')}${url}`;
+};
+
 export function Navbar() {
   const { user, isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
@@ -101,7 +108,7 @@ export function Navbar() {
           <div className="hidden md:flex items-center gap-4">
             {isAuthenticated ? (
               <>
-                {user?.role === 'owner' && (
+                {(user?.role === 'owner' || user?.role === 'admin' || user?.role === 'higher_admin') && (
                   <Link
                     to="/admin"
                     className="p-2 rounded-lg hover:bg-white/5 transition-colors"
@@ -114,8 +121,16 @@ export function Navbar() {
                   to={`/profile/${user?.username}`}
                   className="flex items-center gap-2 hover:bg-white/5 rounded-lg px-3 py-2 transition-colors"
                 >
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#E8C547] to-[#00C8FF] flex items-center justify-center text-sm font-medium text-[#0a0a0b]">
-                    {user?.displayName?.[0]?.toUpperCase() || user?.username?.[0]?.toUpperCase()}
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#E8C547] to-[#00C8FF] flex items-center justify-center text-sm font-medium text-[#0a0a0b] overflow-hidden">
+                    {user?.avatarUrl ? (
+                      <img 
+                        src={getAvatarUrl(user.avatarUrl)!} 
+                        alt={user.displayName} 
+                        className="w-full h-full object-cover" 
+                      />
+                    ) : (
+                      user?.displayName?.[0]?.toUpperCase() || user?.username?.[0]?.toUpperCase()
+                    )}
                   </div>
                   <div className="flex flex-col items-start">
                     <span className="text-sm font-medium text-white">{user?.displayName || user?.username}</span>
@@ -204,15 +219,23 @@ export function Navbar() {
                   onClick={() => setIsMenuOpen(false)}
                   className="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-white/5 transition-colors"
                 >
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#E8C547] to-[#00C8FF] flex items-center justify-center text-sm font-medium text-[#0a0a0b]">
-                    {user?.displayName?.[0]?.toUpperCase() || user?.username?.[0]?.toUpperCase()}
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#E8C547] to-[#00C8FF] flex items-center justify-center text-sm font-medium text-[#0a0a0b] overflow-hidden">
+                    {user?.avatarUrl ? (
+                      <img 
+                        src={getAvatarUrl(user.avatarUrl)!} 
+                        alt={user.displayName} 
+                        className="w-full h-full object-cover" 
+                      />
+                    ) : (
+                      user?.displayName?.[0]?.toUpperCase() || user?.username?.[0]?.toUpperCase()
+                    )}
                   </div>
                   <div>
                     <span className="text-sm font-medium text-white">{user?.displayName || user?.username}</span>
                     <RoleBadge role={user?.role} size="sm" />
                   </div>
                 </Link>
-                {user?.role === 'owner' && (
+                {(user?.role === 'owner' || user?.role === 'admin' || user?.role === 'higher_admin') && (
                   <Link
                     to="/admin"
                     onClick={() => setIsMenuOpen(false)}
