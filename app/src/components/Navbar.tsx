@@ -60,8 +60,9 @@ export function Navbar() {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#E8C547] to-[#00C8FF] flex items-center justify-center">
               <Film className="w-5 h-5 text-[#0a0a0b]" />
             </div>
-            <span className="text-xl font-semibold text-white group-hover:text-[#E8C547] transition-colors">
-              CinemaLog
+            <span className="text-xl font-semibold group-hover:opacity-80 transition-opacity">
+              <span className="text-white">Alfie's </span>
+              <span className="text-[#E8C547]">Basement</span>
             </span>
           </Link>
 

@@ -77,8 +77,8 @@ app.use((req, res) => {
 app.listen(PORT, () => {
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║                                                            ║
-║   🎬 CinemaLog Backend Server                              ║
+║                                                                                   ║
+║   🎬 Alfie's Basement backend server lololol haha bodoh                           ║
 ║                                                            ║
 ║   Server running on port ${PORT}                          ║
 ║   Frontend URL: ${FRONTEND_URL}      ║
