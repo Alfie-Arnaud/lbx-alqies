@@ -34,12 +34,6 @@ A luxury, cinematic film tracking application inspired by Letterboxd. Track film
 - 🔥 Popular this week
 - 🆕 New releases
 
-### Admin Features
-- 👑 Owner command system
-- 📊 Site statistics
-- 👥 User management (promote/demote/ban)
-- 📢 Broadcast announcements
-
 ## 🚀 Quick Start
 
 ### Prerequisites
