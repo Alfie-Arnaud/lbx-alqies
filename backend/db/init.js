@@ -63,7 +63,7 @@ function initializeDatabase() {
             }
         }
     }
-    runMigrations(database);
+   // runMigrations(database);
     console.log('Database initialized successfully');
     return database;
 }
