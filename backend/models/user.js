@@ -5,6 +5,7 @@ function ensureColumns(db) {
     try { db.exec(`ALTER TABLE users ADD COLUMN banner_url TEXT`); } catch (e) {}
     try { db.exec(`ALTER TABLE users ADD COLUMN ban_reason TEXT`); } catch (e) {}
     try { db.exec(`ALTER TABLE users ADD COLUMN ban_expires_at DATETIME`); } catch (e) {}
+    try { db.exec(`ALTER TABLE users ADD COLUMN location TEXT`); } catch (e) {}
 }
 
 function fixRoleConstraint(db) {
@@ -57,8 +58,9 @@ class User {
         return this.findById(result.lastInsertRowid);
     }
 
-    static update(id, updates) {
-        const db = getDatabase();
+   static update(id, updates) {
+    const db = getDatabase();
+    ensureColumns(db);
         const allowedFields = ['display_name', 'bio', 'avatar_url', 'location', 'banner_url'];
         const fields = [];
         const values = [];
