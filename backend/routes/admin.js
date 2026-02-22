@@ -205,9 +205,8 @@ router.post('/command', requireOwner, (req, res) => {
                 });
         }
     } catch (error) {
-        console.error('Command error:', error);
-        res.status(500).json({ error: 'Command failed' });
-    }
-});
+    console.error('Command error full:', error.message, error.stack);
+    res.status(500).json({ error: 'Command failed', detail: error.message });
+}
 
 module.exports = router;
