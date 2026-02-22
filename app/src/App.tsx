@@ -14,6 +14,7 @@ import { Login } from '@/pages/Login';
 import { Register } from '@/pages/Register';
 import { Admin } from '@/pages/Admin';
 import { Top250Page } from '@/pages/Top250Page';
+import { Banned } from '@/pages/Banned';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
@@ -110,10 +111,11 @@ function ProtectedRoute({ children, requireOwner = false }: { children: React.Re
     );
   }
   if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (requireOwner && user?.role !== 'owner' && user?.role !== 'higher_admin') {
-    return <Navigate to="/" replace />;
-  }
-  return <>{children}</>;
+if (user?.isBanned) return <Navigate to="/banned" replace />;
+if (requireOwner && user?.role !== 'owner' && user?.role !== 'higher_admin') {
+  return <Navigate to="/" replace />;
+}
+return <>{children}</>;
 }
 
 function AppContent() {
@@ -133,6 +135,7 @@ function AppContent() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/top250" element={<Top250Page />} />
+            <Route path="/banned" element={<Banned />} />
             <Route path="/admin" element={
               <ProtectedRoute requireOwner>
                 <Admin />
@@ -142,8 +145,7 @@ function AppContent() {
           </Routes>
         </main>
       </div>
-      <Toaster position="bottom-right" toastOptions={{
-        style: {
+      <Toaster position="bottom-right" toastOptions={{        style: {
           background: '#111113',
           border: '1px solid rgba(255,255,255,0.1)',
           color: '#E8E8E8',

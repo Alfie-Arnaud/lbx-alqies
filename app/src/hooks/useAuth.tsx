@@ -11,6 +11,8 @@ export interface User {
   avatarUrl: string | null;
   role: 'owner' | 'higher_admin' | 'admin' | 'patron' | 'pro' | 'lifetime' | 'free';
   isBanned: boolean;
+banReason: string | null;
+banExpiresAt: string | null;
   createdAt: string;
 }
 

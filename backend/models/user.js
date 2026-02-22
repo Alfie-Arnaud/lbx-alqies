@@ -58,15 +58,29 @@ class User {
         return this.findById(userId);
     }
 
-    static ban(userId) {
+    static ban(userId, reason = null, expiresAt = null) {
         const db = getDatabase();
-        db.prepare(`UPDATE users SET is_banned = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(userId);
+        // Add columns if they don't exist (safe migration)
+        try {
+            db.exec(`ALTER TABLE users ADD COLUMN ban_reason TEXT`);
+        } catch (e) { /* column already exists */ }
+        try {
+            db.exec(`ALTER TABLE users ADD COLUMN ban_expires_at DATETIME`);
+        } catch (e) { /* column already exists */ }
+
+        db.prepare(`
+            UPDATE users SET is_banned = 1, ban_reason = ?, ban_expires_at = ?, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = ?
+        `).run(reason, expiresAt, userId);
         return this.findById(userId);
     }
 
     static unban(userId) {
         const db = getDatabase();
-        db.prepare(`UPDATE users SET is_banned = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(userId);
+        db.prepare(`
+            UPDATE users SET is_banned = 0, ban_reason = NULL, ban_expires_at = NULL, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = ?
+        `).run(userId);
         return this.findById(userId);
     }
 
@@ -142,7 +156,7 @@ class User {
     static getAllUsers(limit = 100, offset = 0) {
         const db = getDatabase();
         return db.prepare(`
-            SELECT id, email, username, display_name, role, is_banned, created_at
+            SELECT id, email, username, display_name, role, is_banned, ban_reason, ban_expires_at, created_at
             FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?
         `).all(limit, offset);
     }
@@ -169,6 +183,8 @@ class User {
             bannerUrl: user.banner_url || null,
             role: user.role,
             isBanned: user.is_banned === 1,
+            banReason: user.ban_reason || null,
+            banExpiresAt: user.ban_expires_at || null,
             createdAt: user.created_at
         };
     }

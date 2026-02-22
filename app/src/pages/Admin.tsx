@@ -7,16 +7,13 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { RoleBadge } from '@/components/RoleBadge';
-
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-
 interface SiteStats {
   totalUsers: number;
   totalFilms: number;
   filmsLogged: number;
   reviewsWritten: number;
 }
-
 interface UserItem {
   id: number;
   email: string;
@@ -24,9 +21,10 @@ interface UserItem {
   displayName: string;
   role: string;
   isBanned: boolean;
+  banReason?: string;
+  banExpiresAt?: string;
   createdAt: string;
 }
-
 interface Announcement {
   id: number;
   title: string;
@@ -34,9 +32,11 @@ interface Announcement {
   created_by_username: string;
   created_at: string;
 }
-
+interface BanModal {
+  user: UserItem | null;
+  open: boolean;
+}
 const VALID_ROLES = ['free', 'pro', 'patron', 'lifetime', 'admin', 'higher_admin'];
-
 export function Admin() {
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
@@ -48,31 +48,32 @@ export function Admin() {
   const [commandOutput, setCommandOutput] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-
   // Broadcast form
   const [broadcastTitle, setBroadcastTitle] = useState('');
   const [broadcastContent, setBroadcastContent] = useState('');
   const [broadcastSending, setBroadcastSending] = useState(false);
   const [broadcastMsg, setBroadcastMsg] = useState('');
+  // Ban modal
+  const [banModal, setBanModal] = useState<BanModal>({ user: null, open: false });
+  const [banReason, setBanReason] = useState('');
+  const [banDuration, setBanDuration] = useState('permanent');
+  const [banCustomDate, setBanCustomDate] = useState('');
 
   useEffect(() => {
     if (isAuthenticated && user?.role !== 'owner' && user?.role !== 'higher_admin') {
       navigate('/');
     }
   }, [isAuthenticated, user, navigate]);
-
   useEffect(() => {
     if (!isAuthenticated) return;
     fetch(`${API}/admin/stats`, { credentials: 'include' })
       .then(r => r.json()).then(d => setStats(d.stats)).catch(console.error);
   }, [isAuthenticated]);
-
   useEffect(() => {
     if (activeTab !== 'users' || !isAuthenticated) return;
     fetch(`${API}/admin/users`, { credentials: 'include' })
       .then(r => r.json()).then(d => setUsers(d.users || [])).catch(console.error);
   }, [activeTab, isAuthenticated]);
-
   useEffect(() => {
     if (activeTab !== 'broadcast' || !isAuthenticated) return;
     fetch(`${API}/admin/announcements`, { credentials: 'include' })
@@ -110,7 +111,6 @@ export function Admin() {
       setLoading(false);
     }
   };
-
   const handleBroadcast = async () => {
     if (!broadcastTitle.trim() || !broadcastContent.trim()) return;
     setBroadcastSending(true);
@@ -127,7 +127,6 @@ export function Admin() {
         setBroadcastMsg('✓ Broadcast sent successfully!');
         setBroadcastTitle('');
         setBroadcastContent('');
-        // Refresh announcements
         fetch(`${API}/admin/announcements`, { credentials: 'include' })
           .then(r => r.json()).then(d => setAnnouncements(d.announcements || []));
       } else {
@@ -139,14 +138,12 @@ export function Admin() {
       setBroadcastSending(false);
     }
   };
-
   const deactivateAnnouncement = async (id: number) => {
     await fetch(`${API}/admin/announcements/${id}/deactivate`, {
       method: 'PATCH', credentials: 'include'
     });
     setAnnouncements(prev => prev.filter(a => a.id !== id));
   };
-
   const changeUserRole = async (username: string, role: string) => {
     const endpoint = role === 'free' ? '/admin/demote' : '/admin/promote';
     const res = await fetch(`${API}${endpoint}`, {
@@ -160,16 +157,52 @@ export function Admin() {
     }
   };
 
-  const toggleBan = async (u: UserItem) => {
-    const endpoint = u.isBanned ? '/admin/unban' : '/admin/ban';
-    const res = await fetch(`${API}${endpoint}`, {
+  const openBanModal = (u: UserItem) => {
+    setBanModal({ user: u, open: true });
+    setBanReason('');
+    setBanDuration('permanent');
+    setBanCustomDate('');
+  };
+
+  const closeBanModal = () => {
+    setBanModal({ user: null, open: false });
+  };
+
+  const handleBan = async () => {
+    if (!banModal.user) return;
+    let expiresAt: string | null = null;
+    if (banDuration === '1d') expiresAt = new Date(Date.now() + 86400000).toISOString();
+    else if (banDuration === '7d') expiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
+    else if (banDuration === '30d') expiresAt = new Date(Date.now() + 30 * 86400000).toISOString();
+    else if (banDuration === 'custom' && banCustomDate) expiresAt = new Date(banCustomDate).toISOString();
+
+    const res = await fetch(`${API}/admin/ban`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: banModal.user.username, reason: banReason || null, expiresAt }),
+    });
+    if (res.ok) {
+      setUsers(prev => prev.map(u => u.username === banModal.user!.username
+        ? { ...u, isBanned: true, banReason: banReason || undefined, banExpiresAt: expiresAt || undefined }
+        : u
+      ));
+      closeBanModal();
+    }
+  };
+
+  const handleUnban = async (u: UserItem) => {
+    const res = await fetch(`${API}/admin/unban`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: u.username }),
     });
     if (res.ok) {
-      setUsers(prev => prev.map(x => x.username === u.username ? { ...x, isBanned: !u.isBanned } : x));
+      setUsers(prev => prev.map(x => x.username === u.username
+        ? { ...x, isBanned: false, banReason: undefined, banExpiresAt: undefined }
+        : x
+      ));
     }
   };
 
@@ -252,15 +285,23 @@ export function Admin() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-white">{u.displayName}</span>
                         <RoleBadge role={u.role} size="sm" />
-                        {u.isBanned && <span className="px-2 py-0.5 rounded-full text-xs bg-red-500/20 text-red-400">Banned</span>}
+                        {u.isBanned && (
+                          <span className="px-2 py-0.5 rounded-full text-xs bg-red-500/20 text-red-400">
+                            Banned{u.banReason ? ` · ${u.banReason}` : ''}
+                          </span>
+                        )}
                       </div>
-                      <p className="text-sm text-gray-500">@{u.username} • {u.email}</p>
+                      <p className="text-sm text-gray-500">@{u.username} · {u.email}</p>
+                      {u.isBanned && u.banExpiresAt && (
+                        <p className="text-xs text-red-400/60">
+                          Expires: {new Date(u.banExpiresAt).toLocaleDateString()}
+                        </p>
+                      )}
                     </div>
                   </div>
 
                   {u.role !== 'owner' && (
                     <div className="flex items-center gap-2">
-                      {/* Role selector */}
                       <select
                         value={u.role}
                         onChange={(e) => changeUserRole(u.username, e.target.value)}
@@ -268,8 +309,8 @@ export function Admin() {
                       >
                         {VALID_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                       </select>
-                      {/* Ban/Unban */}
-                      <button onClick={() => toggleBan(u)}
+                      <button
+                        onClick={() => u.isBanned ? handleUnban(u) : openBanModal(u)}
                         className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                           u.isBanned ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
                         }`}>
@@ -310,7 +351,6 @@ export function Admin() {
               </div>
             </div>
 
-            {/* Active announcements */}
             {announcements.length > 0 && (
               <div className="glass p-6 rounded-xl">
                 <h3 className="text-lg font-medium text-white mb-4">Active Announcements</h3>
@@ -374,7 +414,7 @@ export function Admin() {
                   ['/demote @user', 'Reset user to free'],
                   ['/ban @user', 'Ban a user'],
                   ['/unban @user', 'Unban a user'],
-                  ['/broadcast <message>', 'Send site-wide announcement (title: "Announcement")'],
+                  ['/broadcast <message>', 'Send site-wide announcement'],
                 ].map(([cmd, desc]) => (
                   <div key={cmd} className="flex gap-4">
                     <code className="text-[#E8C547] w-56 flex-shrink-0">{cmd}</code>
@@ -386,6 +426,81 @@ export function Admin() {
           </div>
         )}
       </div>
+
+      {/* Ban Modal */}
+      {banModal.open && banModal.user && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="bg-[#111113] border border-white/10 rounded-2xl p-6 w-full max-w-md space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Ban @{banModal.user.username}</h3>
+              <button onClick={closeBanModal} className="text-gray-500 hover:text-white transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Reason (optional)</label>
+                <input
+                  className="input-dark w-full"
+                  placeholder="e.g. Spamming, harassment, etc."
+                  value={banReason}
+                  onChange={e => setBanReason(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Duration</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { value: '1d', label: '1 Day' },
+                    { value: '7d', label: '7 Days' },
+                    { value: '30d', label: '30 Days' },
+                    { value: 'permanent', label: 'Permanent' },
+                    { value: 'custom', label: 'Custom Date' },
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setBanDuration(opt.value)}
+                      className={`py-2 px-3 rounded-lg text-sm transition-colors ${
+                        banDuration === opt.value
+                          ? 'bg-red-500/20 border border-red-500/40 text-red-400'
+                          : 'bg-white/5 border border-white/10 text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {banDuration === 'custom' && (
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Custom Date</label>
+                  <input
+                    type="date"
+                    className="input-dark w-full"
+                    value={banCustomDate}
+                    onChange={e => setBanCustomDate(e.target.value)}
+                    min={new Date().toISOString().split('T')[0]}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button onClick={closeBanModal}
+                className="flex-1 py-2.5 rounded-lg border border-white/10 text-gray-400 hover:text-white transition-colors text-sm">
+                Cancel
+              </button>
+              <button onClick={handleBan}
+                className="flex-1 py-2.5 rounded-lg bg-red-500/20 border border-red-500/30 text-red-400 hover:bg-red-500/30 transition-colors text-sm font-medium">
+                Confirm Ban
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
