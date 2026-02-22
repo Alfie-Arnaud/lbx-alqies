@@ -10,7 +10,8 @@ router.get('/stats', requireOwner, (req, res) => {
     try {
         res.json({ stats: User.getSiteStats() });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to get site stats' });
+        console.error('stats error:', error.message);
+        res.status(500).json({ error: 'Failed to get stats', detail: error.message });
     }
 });
 
@@ -21,7 +22,8 @@ router.get('/users', requireOwner, (req, res) => {
         const users = User.getAllUsers(parseInt(limit), parseInt(offset));
         res.json({ users: users.map(u => User.toJSON(u)) });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to get users' });
+        console.error('getAllUsers error:', error.message);
+        res.status(500).json({ error: 'Failed to get users', detail: error.message });
     }
 });
 
@@ -31,46 +33,45 @@ router.post('/promote', requireOwner, (req, res) => {
         const { username, role } = req.body;
         if (!username || !role) return res.status(400).json({ error: 'Username and role are required' });
         if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: `Invalid role. Valid: ${VALID_ROLES.join(', ')}` });
-
         const user = User.findByUsername(username);
         if (!user) return res.status(404).json({ error: 'User not found' });
         if (user.role === 'owner') return res.status(403).json({ error: 'Cannot modify owner role' });
-
         const updated = User.updateRole(user.id, role);
         res.json({ message: `User role set to ${role}`, user: User.toJSON(updated) });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to update role' });
+        console.error('promote error:', error.message);
+        res.status(500).json({ error: 'Failed to update role', detail: error.message });
     }
 });
 
-// Demote user (reset to free)
+// Demote user
 router.post('/demote', requireOwner, (req, res) => {
     try {
         const { username } = req.body;
         if (!username) return res.status(400).json({ error: 'Username is required' });
-
         const user = User.findByUsername(username);
         if (!user) return res.status(404).json({ error: 'User not found' });
         if (user.role === 'owner') return res.status(403).json({ error: 'Cannot modify owner role' });
-
         const updated = User.updateRole(user.id, 'free');
         res.json({ message: 'User demoted to free', user: User.toJSON(updated) });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to demote user' });
+        console.error('demote error:', error.message);
+        res.status(500).json({ error: 'Failed to demote user', detail: error.message });
     }
 });
 
 // Ban user
 router.post('/ban', requireOwner, (req, res) => {
     try {
-        const { username } = req.body;
+        const { username, reason, expiresAt } = req.body;
         if (!username) return res.status(400).json({ error: 'Username is required' });
         const user = User.findByUsername(username);
         if (!user) return res.status(404).json({ error: 'User not found' });
         if (user.role === 'owner') return res.status(403).json({ error: 'Cannot ban owner' });
-        res.json({ message: 'User banned', user: User.toJSON(User.ban(user.id)) });
+        res.json({ message: 'User banned', user: User.toJSON(User.ban(user.id, reason || null, expiresAt || null)) });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to ban user' });
+        console.error('ban error:', error.message);
+        res.status(500).json({ error: 'Failed to ban user', detail: error.message });
     }
 });
 
@@ -83,7 +84,8 @@ router.post('/unban', requireOwner, (req, res) => {
         if (!user) return res.status(404).json({ error: 'User not found' });
         res.json({ message: 'User unbanned', user: User.toJSON(User.unban(user.id)) });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to unban user' });
+        console.error('unban error:', error.message);
+        res.status(500).json({ error: 'Failed to unban user', detail: error.message });
     }
 });
 
@@ -92,18 +94,16 @@ router.post('/broadcast', requireOwner, (req, res) => {
     try {
         const { title, content, expiresAt } = req.body;
         if (!title || !content) return res.status(400).json({ error: 'Title and content are required' });
-
         const db = require('../db/init').getDatabase();
         const result = db.prepare(`
             INSERT INTO announcements (title, content, created_by, expires_at)
             VALUES (?, ?, ?, ?)
         `).run(title, content, req.user.id, expiresAt || null);
-
         const announcement = db.prepare('SELECT * FROM announcements WHERE id = ?').get(result.lastInsertRowid);
         res.status(201).json({ message: 'Announcement created successfully', announcement });
     } catch (error) {
-        console.error('Broadcast error:', error);
-        res.status(500).json({ error: 'Failed to create announcement' });
+        console.error('broadcast error:', error.message);
+        res.status(500).json({ error: 'Failed to create announcement', detail: error.message });
     }
 });
 
@@ -121,7 +121,8 @@ router.get('/announcements', (req, res) => {
         `).all();
         res.json({ announcements });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to get announcements' });
+        console.error('announcements error:', error.message);
+        res.status(500).json({ error: 'Failed to get announcements', detail: error.message });
     }
 });
 
@@ -132,7 +133,8 @@ router.patch('/announcements/:id/deactivate', requireOwner, (req, res) => {
         db.prepare(`UPDATE announcements SET is_active = 0 WHERE id = ?`).run(parseInt(req.params.id));
         res.json({ message: 'Announcement deactivated' });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to deactivate announcement' });
+        console.error('deactivate error:', error.message);
+        res.status(500).json({ error: 'Failed to deactivate announcement', detail: error.message });
     }
 });
 
@@ -205,7 +207,7 @@ router.post('/command', requireOwner, (req, res) => {
                 });
         }
     } catch (error) {
-        console.error('Command error full:', error.message, error.stack);
+        console.error('Command error:', error.message, error.stack);
         res.status(500).json({ error: 'Command failed', detail: error.message });
     }
 });
