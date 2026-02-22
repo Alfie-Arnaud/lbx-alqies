@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback, createContext, useContext } from 'rea
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
-interface User {
+export interface User {
   id: number;
   email: string;
   username: string;
   displayName: string;
   bio: string;
   avatarUrl: string | null;
-  role: 'owner' | 'patron' | 'pro' | 'lifetime' | 'free';
+  role: 'owner' | 'higher_admin' | 'admin' | 'patron' | 'pro' | 'lifetime' | 'free';
   isBanned: boolean;
   createdAt: string;
 }

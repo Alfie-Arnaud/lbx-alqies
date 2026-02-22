@@ -13,7 +13,7 @@ interface ReviewCardProps {
     containsSpoilers: boolean;
     likesCount: number;
     createdAt: string;
-    user: {
+    user?: {
       username: string;
       displayName: string;
       avatarUrl: string | null;
@@ -50,7 +50,7 @@ export function ReviewCard({
 }: ReviewCardProps) {
   const [showSpoilers, setShowSpoilers] = useState(false);
   const [showActions, setShowActions] = useState(false);
-  const isOwner = currentUser?.username === review.user.username;
+  const isOwner = currentUser?.username === review.user?.username;
   const isAdmin = currentUser?.role === 'owner';
 
   const handleLike = () => {
@@ -60,6 +60,8 @@ export function ReviewCard({
       onLike();
     }
   };
+
+  if (!review.user) return null;
 
   if (compact) {
     return (
@@ -129,7 +131,7 @@ export function ReviewCard({
             >
               <MoreHorizontal className="w-4 h-4 text-gray-400" />
             </button>
-            
+
             {showActions && (
               <div className="absolute right-0 top-full mt-1 w-32 rounded-lg bg-[#1a1a1d] border border-white/10 shadow-lg z-10">
                 {isOwner && (

@@ -44,8 +44,19 @@ interface Review {
   rating?: number;
   containsSpoilers: boolean;
   createdAt: string;
-  film?: { tmdbId: number; title: string; posterPath: string };
-  user?: { username: string; displayName: string };
+  film?: { 
+    id: number;
+    tmdbId: number; 
+    title: string; 
+    posterPath: string | null;
+    releaseDate: string;
+  };
+  user?: { 
+    username: string; 
+    displayName: string;
+    avatarUrl: string | null;
+    role?: string;
+  };
   likesCount: number;
 }
 
