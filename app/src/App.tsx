@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { AnimatedBackground } from '@/components/AnimatedBackground';
 import { Navbar } from '@/components/Navbar';
 import { Toaster } from 'sonner';
-import { X, Megaphone } from 'lucide-react';
+import { X, Megaphone, ShieldBan } from 'lucide-react';
 // Pages
 import { Home } from '@/pages/Home';
 import { Film } from '@/pages/Film';
@@ -33,14 +33,12 @@ function AnnouncementBanner() {
     catch { return []; }
   });
   const seenRef = useRef<number[]>([]);
-  const dismissRef = useRef<number[]>([]);
 
   const dismiss = (id: number) => {
     const current = JSON.parse(localStorage.getItem('dismissedAnnouncements') || '[]');
     if (current.includes(id)) return;
     const next = [...current, id];
     localStorage.setItem('dismissedAnnouncements', JSON.stringify(next));
-    dismissRef.current = next;
     setDismissed(next);
     setFading(p => p.filter(x => x !== id));
   };
@@ -53,7 +51,6 @@ function AnnouncementBanner() {
         const currentDismissed = JSON.parse(localStorage.getItem('dismissedAnnouncements') || '[]');
         setAnnouncements(list);
         setDismissed(currentDismissed);
-        // Auto-dismiss new unseen announcements after 5s
         list.forEach(a => {
           if (!currentDismissed.includes(a.id) && !seenRef.current.includes(a.id)) {
             seenRef.current.push(a.id);
@@ -100,9 +97,40 @@ function AnnouncementBanner() {
   );
 }
 
-// Protected route component
+function BanBanner() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user?.isBanned) {
+      const timer = setTimeout(() => navigate('/banned'), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [user?.isBanned, navigate]);
+
+  if (!user?.isBanned) return null;
+
+  return (
+    <div className="fixed top-0 left-0 right-0 z-[200] flex flex-col">
+      <div className="flex items-center gap-3 px-4 py-3 text-sm"
+        style={{ background: 'linear-gradient(90deg, #dc2626 0%, #7f1d1d 100%)' }}>
+        <ShieldBan className="w-4 h-4 text-white flex-shrink-0" />
+        <span className="font-bold text-white">Akun kamu telah di-banned.</span>
+        {user.banReason && (
+          <span className="text-white/90">Alasan: <span className="font-semibold">{user.banReason}</span></span>
+        )}
+        {user.banExpiresAt && (
+          <span className="text-white/80">· Berakhir: {new Date(user.banExpiresAt).toLocaleDateString('id-ID')}</span>
+        )}
+        <span className="text-white/60 ml-auto">Mengalihkan dalam 3 detik...</span>
+      </div>
+    </div>
+  );
+}
+
 function ProtectedRoute({ children, requireOwner = false }: { children: React.ReactNode; requireOwner?: boolean }) {
   const { isAuthenticated, user, isLoading } = useAuth();
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -110,12 +138,14 @@ function ProtectedRoute({ children, requireOwner = false }: { children: React.Re
       </div>
     );
   }
+
   if (!isAuthenticated) return <Navigate to="/login" replace />;
-if (user?.isBanned) return <Navigate to="/banned" replace />;
-if (requireOwner && user?.role !== 'owner' && user?.role !== 'higher_admin') {
-  return <Navigate to="/" replace />;
-}
-return <>{children}</>;
+  if (user?.isBanned) return <Navigate to="/banned" replace />;
+  if (requireOwner && user?.role !== 'owner' && user?.role !== 'higher_admin') {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
 }
 
 function AppContent() {
@@ -123,6 +153,7 @@ function AppContent() {
     <div className="min-h-screen relative">
       <AnimatedBackground />
       <div className="vignette" />
+      <BanBanner />
       <AnnouncementBanner />
       <div className="content-wrapper">
         <Navbar />
@@ -145,7 +176,8 @@ function AppContent() {
           </Routes>
         </main>
       </div>
-      <Toaster position="bottom-right" toastOptions={{        style: {
+      <Toaster position="bottom-right" toastOptions={{
+        style: {
           background: '#111113',
           border: '1px solid rgba(255,255,255,0.1)',
           color: '#E8E8E8',
