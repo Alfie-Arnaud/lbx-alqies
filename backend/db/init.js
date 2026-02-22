@@ -11,10 +11,7 @@ function getDatabase() {
     return db;
 }
 function runMigrations(database) {
-    // Migration: fix role constraint to include admin and higher_admin
     try {
-        // Check if migration needed by trying to update a test (will fail if constraint wrong)
-        // We recreate users table with correct constraint using SQLite's limited ALTER support
         database.exec(`
             CREATE TABLE IF NOT EXISTS users_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,11 +28,8 @@ function runMigrations(database) {
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         `);
-
-        // Check if users_new is empty (first time) or users exists
         const userCount = database.prepare(`SELECT COUNT(*) as count FROM users`).get();
         if (userCount && userCount.count > 0) {
-            // Copy data from old table to new
             database.exec(`
                 INSERT OR IGNORE INTO users_new 
                 SELECT id, email, username, password_hash, display_name, bio, avatar_url, 
@@ -46,39 +40,30 @@ function runMigrations(database) {
                 FROM users;
             `);
         }
-
-        // Drop old table and rename new one
         database.exec(`DROP TABLE IF EXISTS users;`);
         database.exec(`ALTER TABLE users_new RENAME TO users;`);
-
         console.log('Migration completed: role constraint updated');
     } catch (error) {
         console.error('Migration error:', error.message);
     }
 }
-
 function initializeDatabase() {
     const database = getDatabase();
     const schemaPath = path.join(__dirname, 'schema.sql');
     const schema = fs.readFileSync(schemaPath, 'utf8');
-
-    // Run migrations first
-    runMigrations(database);
-
-    // Split schema into individual statements and execute
     const statements = schema.split(';').filter(stmt => stmt.trim());
     for (const statement of statements) {
         if (statement.trim()) {
             try {
                 database.exec(statement + ';');
             } catch (e) {
-                // Ignore "already exists" errors
                 if (!e.message.includes('already exists')) {
                     console.error('Schema error:', e.message);
                 }
             }
         }
     }
+    runMigrations(database);
     console.log('Database initialized successfully');
     return database;
 }
