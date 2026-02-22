@@ -29,7 +29,7 @@ const authLimiter = rateLimit({
 });
 // Middleware
 app.use(cors({
-    origin: FRONTEND_URL,
+    origin: [FRONTEND_URL, 'https://frontend-navy-nine-55.vercel.app'],
     credentials: true
 }));
 app.use(express.json());
