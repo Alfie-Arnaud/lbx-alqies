@@ -7,6 +7,30 @@ function ensureColumns(db) {
     try { db.exec(`ALTER TABLE users ADD COLUMN ban_expires_at DATETIME`); } catch (e) {}
 }
 
+function fixRoleConstraint(db) {
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS users_fixed (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            display_name TEXT,
+            bio TEXT DEFAULT '',
+            avatar_url TEXT,
+            banner_url TEXT,
+            role TEXT DEFAULT 'free' CHECK (role IN ('owner', 'admin', 'higher_admin', 'patron', 'pro', 'lifetime', 'free')),
+            is_banned INTEGER DEFAULT 0,
+            ban_reason TEXT,
+            ban_expires_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    db.exec(`INSERT OR IGNORE INTO users_fixed SELECT id, email, username, password_hash, display_name, bio, avatar_url, NULL, role, is_banned, NULL, NULL, created_at, updated_at FROM users`);
+    db.exec(`DROP TABLE users`);
+    db.exec(`ALTER TABLE users_fixed RENAME TO users`);
+}
+
 class User {
     static findByEmail(email) {
         const db = getDatabase();
@@ -38,29 +62,30 @@ class User {
         const allowedFields = ['display_name', 'bio', 'avatar_url', 'location', 'banner_url'];
         const fields = [];
         const values = [];
-
         for (const [key, value] of Object.entries(updates)) {
             if (allowedFields.includes(key)) {
                 fields.push(`${key} = ?`);
                 values.push(value);
             }
         }
-
         if (fields.length === 0) return null;
-
         values.push(id);
-        db.prepare(`
-            UPDATE users
-            SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        `).run(...values);
-
+        db.prepare(`UPDATE users SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...values);
         return this.findById(id);
     }
 
     static updateRole(userId, role) {
         const db = getDatabase();
-        db.prepare(`UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(role, userId);
+        try {
+            db.prepare(`UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(role, userId);
+        } catch (e) {
+            if (e.message.includes('CHECK constraint failed')) {
+                fixRoleConstraint(db);
+                db.prepare(`UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(role, userId);
+            } else {
+                throw e;
+            }
+        }
         return this.findById(userId);
     }
 
@@ -92,8 +117,7 @@ class User {
         const filmsWatched = db.prepare(`SELECT COUNT(*) as count FROM user_films WHERE user_id = ? AND is_watched = 1`).get(userId);
         const totalHours = db.prepare(`
             SELECT COALESCE(SUM(f.runtime), 0) as total_minutes
-            FROM user_films uf
-            JOIN films f ON uf.film_id = f.id
+            FROM user_films uf JOIN films f ON uf.film_id = f.id
             WHERE uf.user_id = ? AND uf.is_watched = 1
         `).get(userId);
         const reviewsWritten = db.prepare(`SELECT COUNT(*) as count FROM reviews WHERE user_id = ?`).get(userId);
@@ -101,7 +125,6 @@ class User {
         const listsCreated = db.prepare(`SELECT COUNT(*) as count FROM user_lists WHERE user_id = ?`).get(userId);
         const followers = db.prepare(`SELECT COUNT(*) as count FROM follows WHERE following_id = ?`).get(userId);
         const following = db.prepare(`SELECT COUNT(*) as count FROM follows WHERE follower_id = ?`).get(userId);
-
         return {
             filmsWatched: filmsWatched.count,
             totalHours: Math.round((totalHours.total_minutes || 0) / 60),
