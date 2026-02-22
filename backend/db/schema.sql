@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name TEXT,
     bio TEXT DEFAULT '',
     avatar_url TEXT,
-    role TEXT DEFAULT 'free' CHECK (role IN ('owner', 'patron', 'pro', 'lifetime', 'free')),
+    role TEXT DEFAULT 'free' CHECK (role IN ('owner', 'admin', 'higher_admin', 'patron', 'pro', 'lifetime', 'free')),
     is_banned INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
