@@ -1,4 +1,4 @@
--- CinemaLog Database Schema
+-- Alfie's Basement Database Schema
 -- SQLite database for film tracking application
 
 -- Users table
@@ -10,8 +10,11 @@ CREATE TABLE IF NOT EXISTS users (
     display_name TEXT,
     bio TEXT DEFAULT '',
     avatar_url TEXT,
+    banner_url TEXT,
     role TEXT DEFAULT 'free' CHECK (role IN ('owner', 'admin', 'higher_admin', 'patron', 'pro', 'lifetime', 'free')),
     is_banned INTEGER DEFAULT 0,
+    ban_reason TEXT,
+    ban_expires_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -143,8 +146,8 @@ CREATE TABLE IF NOT EXISTS activity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     activity_type TEXT NOT NULL CHECK (activity_type IN ('watched', 'rated', 'reviewed', 'watchlisted', 'followed', 'list_created')),
-    target_id INTEGER, -- ID of the related entity (film_id, review_id, etc.)
-    target_type TEXT, -- 'film', 'review', 'user', 'list'
+    target_id INTEGER,
+    target_type TEXT,
     metadata TEXT, -- JSON for additional data
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
